@@ -62,5 +62,5 @@ jobs:
     - name : 打包固件
       uses: actions/upload-artifact@main
       with:
-        name: NETCORE-N60Pro_uboot${{ env.FILE_DATE }}
+        name: NETCORE-N60Pro-512M_uboot${{ env.FILE_DATE }}
         path: openwrt/output/
