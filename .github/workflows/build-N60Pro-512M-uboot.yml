@@ -5,6 +5,10 @@
 
 name: 编译 NETCORE-N60-pro-512m_UBoot
 
+env:
+    #REPO_URL: https://github.com/ZSKYC/OP-UBOOT-bl-mt798x
+    TZ: Asia/Shanghai
+
 # 以下开关，触发工作流
 on: 
   repository_dispatch:
