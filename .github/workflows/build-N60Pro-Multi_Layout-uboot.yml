@@ -1,0 +1,134 @@
+name: 云编译 UBOOT N60 PRO UBOOT Multi Layout
+run-name: Uboot - ${{ inputs.board }} (${{ inputs.soc }})
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      soc:
+        required: true
+        description: SOC/CPU Model
+        type: choice
+        default: 'mt7986'
+        options:
+          - 'mt7981'
+          - 'mt7986'
+          - 'mt7988'
+      board:
+        required: true
+        description: Router Model Name
+        type: string
+        #default: sfp-nand-7981rxxx
+        default: netcore_n60-pro
+      multi-layout:
+        required: true
+        description: Enable Multiple Flash Layout Support
+        type: choice
+        default: '1'
+        options:
+          - '0'
+          - '1'
+      runs-on:
+        required: true
+        description: Runs on...
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-20.04
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-latest
+
+env:
+  REPO_URL: https://github.com/ZSKYC/OP-UBOOT-bl-mt798x
+  REPO_BRANCH: N60PRO-ML
+  DIY_P_SH:
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  ubuntu-build:
+    name: Build on ${{ inputs.runs-on }}
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: 检查项目分支
+        uses: actions/checkout@main
+      - name: 初始化编译环境
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get update
+          sudo -E apt-get -y install gcc-aarch64-linux-gnu build-essential flex bison libssl-dev device-tree-compiler
+          sudo -E apt-get -y autoremove
+          sudo -E apt-get autoclean
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown $USER:$GROUPS /workdir
+      - name: 下载uboot源码
+        working-directory: /workdir
+        run: |
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+      - name: 编译uboot
+        id: compile
+        run: |
+          cd openwrt
+          echo -e "$(nproc) thread compile"
+          ./build.sh
+          echo "FILE_DATE=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+        env:
+          SOC: ${{ inputs.soc }}
+          BOARD: ${{ inputs.board }}
+          MULTI_LAYOUT: ${{ inputs.multi-layout }}
+      - name: 查看磁盘使用情况
+        if: (!cancelled())
+        run: df -hT
+      - name: 整理文件
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        run: | 
+          cd openwrt/output
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+      - name: 上传uboot到Artifacts
+        uses: actions/upload-artifact@main
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        with:
+          name: Uboot-${{ inputs.board }}-${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE }}
+      - name: 生成release标签
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          touch release.txt
+          echo "release_tag=Uboot-${{ inputs.board }}-${{ env.FILE_DATE }}" >> $GITHUB_OUTPUT
+          echo "${{ inputs.board }}-uboot" >> release.txt
+          echo "📥 uboot下载" >> release.txt
+          echo "status=success" >> $GITHUB_OUTPUT
+      - name: 发布至release
+        uses: softprops/action-gh-release@master
+        if: steps.tag.outputs.status == 'success' && !cancelled()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: ${{ env.FIRMWARE }}/*
+          name: Uboot-${{ inputs.board }}-${{ env.FILE_DATE }}
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          body_path: release.txt
+      - name: 删除旧发布的固件
+        uses: dev-drprasad/delete-older-releases@master
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+        with:
+          keep_latest: 7
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 删除过时工作流程
+        uses: Mattraks/delete-workflow-runs@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 1
+          keep_minimum_runs: 3
